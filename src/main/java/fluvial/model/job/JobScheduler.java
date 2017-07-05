@@ -1,9 +1,5 @@
-package fluvial.scheduler;
+package fluvial.model.job;
 
-import fluvial.model.job.*;
-import fluvial.model.performer.PerformerAllocator;
-import fluvial.model.storage.StoreSetter;
-import fluvial.model.storage.StoreSetterCondition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,24 +28,7 @@ public class JobScheduler {
     private JobStorageAdapter jobStorageAdapter;
 
     @Autowired
-    private JobSafeSaver jobSafeSaver;
-
-    @Autowired
-    private PerformerAllocator performerAllocator;
-
-    private StoreSetter<JobStorage> rescheduleJob = entity -> {
-        Job job = entity.getSpecificJob();
-        job.triedTimes++;
-        entity.setJobStatus(JobStatus.Scheduled);
-        return entity;
-    };
-
-    private StoreSetterCondition<JobStorage> rescheduleJobCondition = entity -> {
-        // When using safe save, which can make sure the update happens.
-        // But in some cases, it is not right, like the status set by scheduler may be over written.
-        // So when doing reschedule, some states set by scheduler should be make sure not over written.
-        return entity.getJobStatus().equals(JobStatus.InProcess);
-    };
+    private JobStatusArbiter statusArbiter;
 
     public JobScheduler(){
         initializeThreadPool();
@@ -87,11 +66,10 @@ public class JobScheduler {
                 logger.info("Job " + job.getId() + " has already been in jobsInScheduler!");
                 continue;
             }
-
             JobStorage updatedJob;
             try {
-                job.setJobStatus(targetStatus);
-                updatedJob = (JobStorage) jobStorageAdapter.save(job);
+                // This is controller level operation in default, so the scheduler can operate status set by controller.
+                updatedJob = statusArbiter.setJobStatus(job, targetStatus, OperationLevel.CONTROLLER, OperationLevel.SCHEDULER);
             }catch (OptimisticLockingFailureException e){
                 continue;
             }
@@ -130,43 +108,6 @@ public class JobScheduler {
      */
 
     public JobStorage scheduleCurrentJob(JobStorage jobStorage){
-        return jobSafeSaver.safeSetJobStatus(jobStorage, JobStatus.Scheduled);
-    }
-
-    public void scheduleNextJob(JobStorage jobStorage, JobStatus targetJobStatus){
-        // For parent job, go on doing its sub job and make itself hang on.
-        if(jobStorage.getSubJobs().size() > 0){
-            jobStorage = jobSafeSaver.safeSetJobStatus(jobStorage, JobStatus.InProcess);
-            JobStorage firstSubJob = jobStorage.getSubJobs().get(0);
-            jobSafeSaver.safeSetJobStatus(firstSubJob, JobStatus.Scheduled);
-        }
-        // For leaf job, find its next incomplete sibling and make itself complete.
-        // If not any, make its parent complete recursively.
-        else {
-            jobStorage.getSpecificJob().stop();
-            jobSafeSaver.safeSetJobStatus(jobStorage, targetJobStatus);
-
-            // Find next job in the job tree.
-            JobStorage parentJob = jobStorage.getParentJob();
-            while (parentJob != null) {
-                for (JobStorage job : parentJob.getSubJobs()) {
-                    if (!job.getJobStatus().equals(JobStatus.Completed)
-                            && !job.getJobStatus().equals(JobStatus.Failure)) {
-                        jobSafeSaver.safeSetJobStatus(job, JobStatus.Scheduled);
-                        return;
-                    }
-                }
-                Job parentSpecificJob = parentJob.getSpecificJob();
-                parentSpecificJob.stop();
-                jobSafeSaver.safeSetJobStatus(parentJob, JobStatus.Completed);
-                parentJob = parentJob.getParentJob();
-            }
-
-            performerAllocator.releasePerformer(jobStorage);
-        }
-    }
-
-    public JobStorage rescheduleJob(JobStorage jobStorage){
-        return jobSafeSaver.safeSave(jobStorage, rescheduleJob, rescheduleJobCondition);
+        return statusArbiter.setJobStatus(jobStorage, JobStatus.Scheduled);
     }
 }

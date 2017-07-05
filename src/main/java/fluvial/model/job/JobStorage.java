@@ -49,6 +49,9 @@ public abstract class JobStorage implements Store {
     @Version
     private Long version;
 
+    @Enumerated(EnumType.STRING)
+    private OperationLevel level;
+
     public Long getId(){return id;}
 
     public String getJobType() { return jobType; }
@@ -57,7 +60,7 @@ public abstract class JobStorage implements Store {
 
     public JobStatus getJobStatus(){return jobStatus;}
 
-    public void setJobStatus(JobStatus status) {this.jobStatus = status;}
+    void setJobStatus(JobStatus status) {this.jobStatus = status;}
 
     public Job getSpecificJob() {
         if(specificJob != null){
@@ -98,4 +101,8 @@ public abstract class JobStorage implements Store {
     public Date getUpdateTime() {return updateTime;}
 
     public void setUpdateTime(Date updateTime) {this.updateTime = updateTime;}
+
+    public OperationLevel getOperationLevel() {return level;}
+
+    public void setOperationLevel(OperationLevel level) {this.level = level;}
 }

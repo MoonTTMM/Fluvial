@@ -8,7 +8,7 @@ import fluvial.model.performer.PerformerAllocator;
 import fluvial.model.performer.PerformerStorage;
 import fluvial.model.performer.PerformerStorageAdapter;
 import fluvial.model.storage.StoreSetter;
-import fluvial.scheduler.JobScheduler;
+import fluvial.model.storage.StoreSetterCondition;
 import fluvial.util.ApplicationContextProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,6 +36,7 @@ public abstract class Job {
     public int triedTimes;
 
     private StoreSetter<JobStorage> setJobInitInfo = entity -> {
+        System.out.println("Set job init info.");
         Job job = entity.getSpecificJob();
         job.createGoals();
         entity.setStartTime(new Date());
@@ -75,6 +76,9 @@ public abstract class Job {
     @JsonIgnore
     protected JobScheduler jobScheduler;
 
+    @JsonIgnore
+    protected JobStatusArbiter statusArbiter;
+
     public List<Goal> getGoals(){
         return goals;
     }
@@ -87,6 +91,8 @@ public abstract class Job {
         performerAllocator = context.getBean(PerformerAllocator.class);
         jobFactory = context.getBean(JobFactory.class);
         jobScheduler = context.getBean(JobScheduler.class);
+        statusArbiter = context.getBean(JobStatusArbiter.class);
+
         goals = new ArrayList<>();
         try {
             webSocket = context.getBean(WebSocket.class);
@@ -111,14 +117,11 @@ public abstract class Job {
                 return;
             }
         }
-
         execute();
-
         if(isJobFinished()){
             return;
         }
-
-        jobScheduler.rescheduleJob(jobStorage);
+        rescheduleJob();
     }
 
     /**
@@ -239,7 +242,7 @@ public abstract class Job {
      * handle if the job fails.(like timeout)
      */
     public void handleFail(){
-        jobScheduler.scheduleNextJob(jobStorage, JobStatus.Failure);
+        scheduleNextJob(JobStatus.Failure);
     }
 
     /**
@@ -267,17 +270,17 @@ public abstract class Job {
         JobStorage parent = jobStorage.getParentJob();
         if(parent != null){
             for(JobStorage subJob : parent.getSubJobs()){
-                jobSafeSaver.safeSetJobStatus(subJob, JobStatus.Failure);
+                statusArbiter.setJobStatus(subJob, JobStatus.Failure);
             }
         }
-        jobScheduler.scheduleNextJob(jobStorage, JobStatus.Failure);
+        scheduleNextJob(JobStatus.Failure);
     }
 
     protected void failParentJobs(){
-        jobStorage = jobSafeSaver.safeSetJobStatus(jobStorage, JobStatus.Failure);
+        jobStorage = statusArbiter.setJobStatus(jobStorage, JobStatus.Failure);
         JobStorage parent = jobStorage.getParentJob();
         while (parent != null){
-            jobSafeSaver.safeSetJobStatus(parent, JobStatus.Failure);
+            statusArbiter.setJobStatus(parent, JobStatus.Failure);
             parent = parent.getParentJob();
         }
     }
@@ -294,7 +297,7 @@ public abstract class Job {
             return true;
         }
         if(checkGoals()){
-            jobScheduler.scheduleNextJob(jobStorage, JobStatus.Completed);
+            scheduleNextJob(JobStatus.Completed);
             return true;
         }
         return false;
@@ -305,7 +308,7 @@ public abstract class Job {
             path.add(currentJob);
             path.forEach(jobNode -> {
                 jobNode.getSpecificJob().cleanJobData();
-                jobSafeSaver.safeSetJobStatus(jobNode, JobStatus.Requested);});
+                statusArbiter.setJobStatus(jobNode, JobStatus.Requested);});
         }
         List<JobStorage> currentJobPath = new ArrayList<>();
         currentJobPath.addAll(path);
@@ -332,4 +335,59 @@ public abstract class Job {
         }
         return flag;
     }
+
+    private void scheduleNextJob(JobStatus targetJobStatus){
+        // For parent job, go on doing its sub job and make itself hang on.
+        if(jobStorage.getSubJobs().size() > 0){
+            jobStorage = setJobStatusInScheduler(jobStorage, JobStatus.InProcess);
+            JobStorage firstSubJob = jobStorage.getSubJobs().get(0);
+            setJobStatusInScheduler(firstSubJob, JobStatus.Scheduled);
+        }
+        // For leaf job, find its next incomplete sibling and make itself complete.
+        // If not any, make its parent complete recursively.
+        else {
+            jobStorage.getSpecificJob().stop();
+            setJobStatusInScheduler(jobStorage, targetJobStatus);
+
+            // Find next job in the job tree.
+            JobStorage parentJob = jobStorage.getParentJob();
+            while (parentJob != null) {
+                for (JobStorage job : parentJob.getSubJobs()) {
+                    if (!job.getJobStatus().equals(JobStatus.Completed)
+                            && !job.getJobStatus().equals(JobStatus.Failure)) {
+                        setJobStatusInScheduler(job, JobStatus.Scheduled);
+                        return;
+                    }
+                }
+                Job parentSpecificJob = parentJob.getSpecificJob();
+                parentSpecificJob.stop();
+                setJobStatusInScheduler(parentJob, JobStatus.Completed);
+                parentJob = parentJob.getParentJob();
+            }
+
+            performerAllocator.releasePerformer(jobStorage);
+        }
+    }
+
+    private JobStorage setJobStatusInScheduler(JobStorage job, JobStatus status){
+        return statusArbiter.setJobStatus(job, status, OperationLevel.SCHEDULER);
+    }
+
+    private JobStorage rescheduleJob(){
+        return jobSafeSaver.safeSave(jobStorage, rescheduleJob, rescheduleJobCondition);
+    }
+
+    private StoreSetter<JobStorage> rescheduleJob = entity -> {
+        Job job = entity.getSpecificJob();
+        job.triedTimes++;
+        entity.setJobStatus(JobStatus.Scheduled);
+        return entity;
+    };
+
+    private StoreSetterCondition<JobStorage> rescheduleJobCondition = entity -> {
+        // When using safe save, which can make sure the update happens.
+        // But in some cases, it is not right, like the status set by scheduler may be over written.
+        // So when doing reschedule, some states set by scheduler should be make sure not over written.
+        return entity.getJobStatus().equals(JobStatus.InProcess);
+    };
 }

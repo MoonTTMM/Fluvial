@@ -34,12 +34,4 @@ public class JobSafeSaver {
         };
         return safeSaver.safeSave(job, jobStorageAdapter, setStore, condition);
     }
-
-    public JobStorage safeSetJobStatus(JobStorage jobStorage, JobStatus targetStatus){
-        StoreSetter<JobStorage> setJobStatus = entity -> {
-            entity.setJobStatus(targetStatus);
-            return entity;
-        };
-        return safeSave(jobStorage, setJobStatus);
-    }
 }
