@@ -1,6 +1,7 @@
 package fluvial;
 
 import fluvial.model.job.JobFactory;
+import fluvial.model.performer.PerformerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
@@ -21,5 +22,13 @@ public class FluvialConfig {
         JobFactory jobFactory = new JobFactory();
         jobFactory.initJobMetadataMap();
         return jobFactory;
+    }
+
+    @Bean
+    @Scope("singleton")
+    public PerformerFactory performerFactory(){
+        PerformerFactory performerFactory = new PerformerFactory();
+        performerFactory.initPerformerMetadata();
+        return performerFactory;
     }
 }

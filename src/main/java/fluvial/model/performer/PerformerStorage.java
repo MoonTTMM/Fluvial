@@ -18,6 +18,12 @@ public abstract class PerformerStorage implements Store {
 
     private String name;
 
+    private String performerType;
+
+    @Column(name = "performer", columnDefinition = "json")
+    @Convert(converter = PerformerJsonConverter.class)
+    private Performer performer;
+
     @Enumerated(EnumType.STRING)
     private PerformerStatus status;
 
@@ -38,4 +44,12 @@ public abstract class PerformerStorage implements Store {
     public PerformerStatus getStatus(){ return status;}
 
     public void setStatus(PerformerStatus status) {this.status = status;}
+
+    public Performer getPerformer() {return performer;}
+
+    public void setPerformer(Performer performer) {this.performer = performer;}
+
+    public String getPerformerType() {return performerType;}
+
+    public void setPerformerType(String performerType) {this.performerType = performerType;}
 }

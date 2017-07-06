@@ -1,12 +1,8 @@
 package fluvial.model.job;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import fluvial.util.ApplicationContextProvider;
+import fluvial.util.ConfigReader;
+import org.springframework.beans.factory.annotation.Autowired;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -17,31 +13,19 @@ import java.util.List;
 public class JobFactory {
 
     public static HashMap<String, JobMetadata> jobMetadataMap = new HashMap<>();
-    public static HashMap<String, Object> jobConfig = new HashMap<>();
+
+    @Autowired
+    private JobStorageAdapter adapter;
 
     /**
      * We support json string as input to INIT job metadata.
-     * @param jobMetaDataContent
      * ex. [{"jobType": "A", "subJobs":["a1","a2"]},{"jobType":"B", "subJobs":["b1", "b2"]}]
      * @return
      */
-    public void initJobMetadataMap(InputStream jobMetaDataContent){
-        ObjectMapper mapper = new ObjectMapper();
-        List<LinkedHashMap> jobMetadataArray = new ArrayList<>();
-        try {
-            jobConfig = mapper.readValue(jobMetaDataContent, new TypeReference<HashMap<String, Object>>(){});
-            jobMetadataArray = (List<LinkedHashMap>)jobConfig.get("jobs");
-        }catch (IOException e){
-            e.printStackTrace();
-        }
-        for(LinkedHashMap metadata : jobMetadataArray){
+    public void initJobMetadataMap(){
+        for(LinkedHashMap metadata : (List<LinkedHashMap>)ConfigReader.getConfig().get("jobs")){
             jobMetadataMap.put((String)metadata.get("jobType"), new JobMetadata(metadata));
         }
-    }
-
-    public void initJobMetadataMap(){
-        InputStream jsonStream = JobFactory.class.getResourceAsStream("/fluvial.json");
-        initJobMetadataMap(jsonStream);
     }
 
     /**
@@ -50,7 +34,7 @@ public class JobFactory {
      * @return
      */
     public JobStorage setupJob(JobStorage jobStorage){
-        JobStorageAdapter adapter = ApplicationContextProvider.getApplicationContext().getBean(JobStorageAdapter.class);
+        //JobStorageAdapter adapter = ApplicationContextProvider.getApplicationContext().getBean(JobStorageAdapter.class);
         Job specificJob = jobStorage.getSpecificJob();
         String jobType = jobStorage.getJobType();
         jobStorage = adapter.save(jobStorage);
@@ -95,7 +79,7 @@ public class JobFactory {
 
     public static Class getJobClass(String jobType){
         JobMetadata metadata = jobMetadataMap.get(jobType);
-        String className = jobConfig.get("basePackage") + "." + jobType;
+        String className = ConfigReader.fluvialConfig.get("jobPackage") + "." + jobType;
         if(metadata != null && metadata.className != null){
             className = metadata.className;
         }
