@@ -7,8 +7,10 @@ import fluvial.model.performer.Performer;
  */
 public class MoveCommand extends Command {
 
-    public MoveCommand(Performer performer) {
-        super(performer);
+    private Performer performer;
+
+    public MoveCommand(Performer performer){
+        this.performer = performer;
     }
 
     @Override
